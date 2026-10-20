@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GreenCorridor AI — Predictive Ambulance Corridor</title>
+  
+  <!-- Leaflet CSS (CDN with fallback detection) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+        crossorigin="" id="leaflet-css" />
+  
+  <!-- Application CSS -->
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <!-- Permanent Simulation Banner -->
+  <div class="simulation-banner" role="banner">
+    <div class="banner-content">
+      <span class="banner-badge">SIMULATION NOTICE</span>
+      <span>All GPS positions, traffic congestion, and police responses are simulated. No real emergency services or signals are connected.</span>
+    </div>
+    <div id="fallback-badge" class="fallback-badge hidden">
+      ⚠️ Fallback route in use (Anna Salai, Chennai)
+    </div>
+  </div>
+
+  <div class="app-layout">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="logo-mark">🚑</div>
+        <div>
+          <h1 class="app-title">GreenCorridor AI</h1>
+          <p class="app-subtitle">Predictive Corridor Coordination</p>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <button class="nav-item active" data-view="dashboard">
+          <span class="nav-icon">📊</span>
+          <span class="nav-label">Dashboard</span>
+        </button>
+        <button class="nav-item" data-view="junctions">
+          <span class="nav-icon">🚦</span>
+          <span class="nav-label">Junctions</span>
+          <span id="badge-junctions-count" class="nav-pill">0</span>
+        </button>
+        <button class="nav-item" data-view="alerts">
+          <span class="nav-icon">🚨</span>
+          <span class="nav-label">Police Alerts</span>
+          <span id="badge-alerts-count" class="nav-pill alert-pill">0</span>
+        </button>
+        <button class="nav-item" data-view="analytics">
+          <span class="nav-icon">📈</span>
+          <span class="nav-label">Analytics</span>
+        </button>
+        <button class="nav-item" data-view="events">
+          <span class="nav-icon">📜</span>
+          <span class="nav-label">Event History</span>
+        </button>
+        <button class="nav-item" data-view="settings">
+          <span class="nav-icon">⚙️</span>
+          <span class="nav-label">Settings & Model</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-status-box">
+        <div class="status-indicator">
+          <span id="system-status-dot" class="dot dot-idle"></span>
+          <span id="system-status-text">System Idle</span>
+        </div>
+        <div class="trip-id-display">
+          Trip: <span id="display-trip-id">—</span> | Speed: <span id="display-speed-text">1x</span>
+        </div>
+        <div class="sim-time-display">
+          Sim Time: <span id="display-sim-time">00:00</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Top Action Bar -->
+      <header class="top-action-bar">
+        <div class="control-group">
+          <button id="btn-start" class="btn btn-primary">▶ Start Simulation</button>
+          <button id="btn-pause" class="btn btn-warning" disabled>⏸ Pause</button>
+          <button id="btn-resume" class="btn btn-success" disabled>⏵ Resume</button>
+          <button id="btn-reset" class="btn btn-danger" disabled>⏹ Reset</button>
+        </div>
+
+        <div class="speed-control-group">
+          <span class="control-label">Speed:</span>
+          <button class="btn btn-speed active" data-speed="1">1x</button>
+          <button class="btn btn-speed" data-speed="2">2x</button>
+          <button class="btn btn-speed" data-speed="5">5x</button>
+          <button class="btn btn-speed" data-speed="10">10x</button>
+        </div>
+
+        <div class="officer-toggle-group">
+          <label class="toggle-container" title="Simulated officer automatically acknowledges alerts after a random delay">
+            <input type="checkbox" id="chk-auto-officer" checked>
+            <span class="toggle-slider"></span>
+            <span class="toggle-text">Auto-Officer <small>(Simulated)</small></span>
+          </label>
+        </div>
+      </header>
+
+      <!-- VIEW 1: DASHBOARD -->
+      <section id="view-dashboard" class="view-panel active">
+        <!-- Live KPI Metric Cards -->
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-title">Ambulance Progress</div>
+            <div class="kpi-value"><span id="kpi-distance-val">0.0</span> / <span id="kpi-total-distance-val">0.0</span> km</div>
+            <div class="progress-bar-container">
+              <div id="kpi-progress-bar" class="progress-bar-fill" style="width: 0%"></div>
+            </div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-title">Next Junction ETA</div>
+            <div class="kpi-value cyan-highlight" id="kpi-next-eta">—</div>
+            <div class="kpi-sub" id="kpi-next-junction-name">Waiting to start</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-title">Active Police Alerts</div>
+            <div class="kpi-value amber-highlight" id="kpi-active-alerts">0</div>
+            <div class="kpi-sub"><span id="kpi-escalated-alerts">0</span> escalated</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-title">Simulated Time Saved</div>
+            <div class="kpi-value green-highlight" id="kpi-time-saved">—</div>
+            <div class="kpi-sub">vs baseline wait</div>
+          </div>
+        </div>
+
+        <!-- Map & Split Panel -->
+        <div class="dashboard-grid">
+          <div class="map-container-box">
+            <div class="panel-header">
+              <h3>Live Corridor Map</h3>
+              <div class="map-legend">
+                <span class="legend-item"><span class="marker-dot dot-cyan"></span> Ambulance</span>
+                <span class="legend-item"><span class="marker-dot dot-gray"></span> Upcoming</span>
+                <span class="legend-item"><span class="marker-dot dot-amber"></span> Alerted</span>
+                <span class="legend-item"><span class="marker-dot dot-green"></span> Acked</span>
+                <span class="legend-item"><span class="marker-dot dot-red"></span> Escalated</span>
+              </div>
+            </div>
+            
+            <div id="map-tile-warning" class="tile-warning hidden">
+              ⚠️ Map tiles unavailable (offline / blocked). Route & coordinate telemetry are still actively tracked.
+            </div>
+            <div id="map" class="map-view"></div>
+          </div>
+
+          <!-- Quick Action & Alert Peek Panel -->
+          <div class="side-peek-box">
+            <div class="panel-header">
+              <h3>Live Alert Queue</h3>
+              <span id="quick-alert-count" class="badge-neutral">0 active</span>
+            </div>
+            <div id="quick-alerts-list" class="quick-alerts-container">
+              <div class="empty-state">
+                <div class="empty-icon">🚨</div>
+                <div class="empty-text">No active alerts. When ambulance is 60–90s from a junction, an alert will trigger here.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 2: JUNCTIONS -->
+      <section id="view-junctions" class="view-panel">
+        <div class="panel-box">
+          <div class="panel-header">
+            <div>
+              <h2>Corridor Junctions & Rule-Based ETAs</h2>
+              <p class="section-desc">Signalised intersections along Anna Salai corridor with real-time rule-based predictions.</p>
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="data-table" id="junctions-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Junction Name</th>
+                  <th>Remaining Dist</th>
+                  <th>Rule-based ETA</th>
+                  <th>Segment Risk</th>
+                  <th>Signal Status</th>
+                  <th>Roadblock Control</th>
+                </tr>
+              </thead>
+              <tbody id="junctions-table-body">
+                <tr>
+                  <td colspan="7" class="text-center empty-cell">No active trip. Press "Start Simulation" to load junctions.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 3: ALERTS -->
+      <section id="view-alerts" class="view-panel">
+        <div class="panel-box">
+          <div class="panel-header">
+            <div>
+              <h2>Police Dispatch & Corridor Clearance Alerts</h2>
+              <p class="section-desc">Alerts trigger 60–90s before arrival. Officers must acknowledge to enable green wave clearance.</p>
+            </div>
+            <div class="alert-action-guide">
+              <span class="guide-chip"><span class="chip-color chip-amber"></span> Created</span>
+              <span class="guide-chip"><span class="chip-color chip-green"></span> Acknowledged</span>
+              <span class="guide-chip"><span class="chip-color chip-red"></span> Escalated</span>
+              <span class="guide-chip"><span class="chip-color chip-purple"></span> Cleared</span>
+            </div>
+          </div>
+
+          <div id="full-alerts-list" class="full-alerts-grid">
+            <div class="empty-state">
+              <div class="empty-icon">🛡️</div>
+              <div class="empty-text">No alerts for current trip. Alerts will appear as ambulance progresses.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 4: ANALYTICS -->
+      <section id="view-analytics" class="view-panel">
+        <div class="panel-box">
+          <div class="panel-header">
+            <div>
+              <h2>Simulation Analytics: Baseline vs Coordinated</h2>
+              <p class="section-desc">Compare the alert-coordinated corridor against an uncoordinated baseline run with identical seed and route.</p>
+            </div>
+            <span class="badge-simulated">All values: Simulated results</span>
+          </div>
+
+          <div class="analytics-split-grid">
+            <!-- Summary Comparison Cards -->
+            <div class="comparison-card baseline-card">
+              <div class="card-tag">Baseline Run (Simulated)</div>
+              <h3 class="comparison-time" id="analytics-base-dur">—</h3>
+              <p class="comparison-sub">Full signal wait at every junction (no corridor alerts)</p>
+              <div class="comparison-metric-row">
+                <span>Total Signal Wait:</span>
+                <strong id="analytics-base-wait">—</strong>
+              </div>
+            </div>
+
+            <div class="comparison-card coord-card">
+              <div class="card-tag">Coordinated Corridor (Simulated)</div>
+              <h3 class="comparison-time cyan-highlight" id="analytics-coord-dur">—</h3>
+              <p class="comparison-sub">Predictive clearance with 70% wait reduction on acknowledged signals</p>
+              <div class="comparison-metric-row">
+                <span>Total Signal Wait:</span>
+                <strong id="analytics-coord-wait">—</strong>
+              </div>
+            </div>
+
+            <div class="comparison-card saved-card">
+              <div class="card-tag">Simulated Time Saved</div>
+              <h3 class="comparison-time green-highlight" id="analytics-saved-dur">—</h3>
+              <p class="comparison-sub">Duration saved by predictive corridor clearance</p>
+              <div class="comparison-metric-row">
+                <span>Formula:</span>
+                <code>baseline_duration − coordinated_duration</code>
+              </div>
+            </div>
+          </div>
+
+          <!-- Side by Side Metrics Table -->
+          <div class="sub-panel">
+            <h3>Side-by-Side Telemetry Comparison</h3>
+            <table class="data-table" id="analytics-table">
+              <thead>
+                <tr>
+                  <th>Metric</th>
+                  <th>Baseline Trip (Simulated)</th>
+                  <th>Coordinated Trip (Simulated)</th>
+                  <th>Variance / Impact</th>
+                </tr>
+              </thead>
+              <tbody id="analytics-table-body">
+                <tr>
+                  <td colspan="4" class="text-center empty-cell">Trip in progress or not started. Run a full trip to generate analytics.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Assumptions & Limitations Box -->
+          <div class="assumptions-box">
+            <h4>⚠️ Model Assumptions & Limitations (Simulated Environment)</h4>
+            <ul id="analytics-assumptions-list" class="assumptions-list">
+              <li>All GPS coordinates and police responses are simulated via deterministic seeded algorithms.</li>
+              <li>Baseline simulation assumes full signal delay at every intersection without corridor green light priority.</li>
+              <li>Coordinated clearance reduces signal wait by 70% upon timely officer acknowledgement.</li>
+              <li>Escalated alerts reduce signal wait by only 30% due to delayed clearance response.</li>
+              <li>No real traffic signals are physically altered or controlled.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 5: EVENT HISTORY -->
+      <section id="view-events" class="view-panel">
+        <div class="panel-box">
+          <div class="panel-header">
+            <div>
+              <h2>Audit Log & Event History</h2>
+              <p class="section-desc">UTC timestamped audit trail of every status change, alert event, and roadblock.</p>
+            </div>
+            <div class="event-tools">
+              <select id="event-filter-select" class="form-select">
+                <option value="">All Events</option>
+                <option value="TRIP_STARTED">Trip Started</option>
+                <option value="ALERT_CREATED">Alert Created</option>
+                <option value="ALERT_ACK">Alert Acknowledged</option>
+                <option value="ALERT_ESCALATED">Alert Escalated</option>
+                <option value="JUNCTION_PASSED">Junction Passed</option>
+                <option value="ROADBLOCK_SET">Roadblock Set</option>
+                <option value="ROADBLOCK_CLEARED">Roadblock Cleared</option>
+              </select>
+              <button id="btn-export-csv" class="btn btn-secondary">📥 Download CSV</button>
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="data-table" id="events-table">
+              <thead>
+                <tr>
+                  <th>Event ID</th>
+                  <th>Timestamp (UTC)</th>
+                  <th>Sim Time</th>
+                  <th>Event Type</th>
+                  <th>Description</th>
+                </tr>
+              </thead>
+              <tbody id="events-table-body">
+                <tr>
+                  <td colspan="5" class="text-center empty-cell">No events logged yet.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 6: SETTINGS & MODEL -->
+      <section id="view-settings" class="view-panel">
+        <div class="panel-box">
+          <div class="panel-header">
+            <div>
+              <h2>Transparent Rule-Based ETA Model & Settings</h2>
+              <p class="section-desc">Inspect and configure all simulation inputs. Transparently documented — no black-box AI.</p>
+            </div>
+            <button id="btn-save-settings" class="btn btn-primary">💾 Save Settings</button>
+          </div>
+
+          <!-- Formula Inspection Card -->
+          <div class="formula-card">
+            <h3>📐 Transparent ETA Formula</h3>
+            <div class="formula-code">
+              <code>ETA_seconds = (remaining_distance_m / effective_speed_mps) + expected_signal_delay_s</code><br>
+              <code>effective_speed_mps = (base_speed_kmh / 3.6) × (1 − congestion_factor)</code><br>
+              <code>expected_signal_delay_s = remaining_signalised_junctions × signal_delay_per_junction_s</code>
+            </div>
+            <p class="formula-note">
+              <strong>Label:</strong> Rule-based deterministic model. Congestion factors are mapped per segment risk level (Low: <span id="disp-cong-low">0.1</span>, Med: <span id="disp-cong-med">0.3</span>, High: <span id="disp-cong-high">0.5</span>).
+            </p>
+          </div>
+
+          <!-- Settings Form Grid -->
+          <form id="settings-form" class="settings-grid" onsubmit="return false;">
+            <div class="form-group">
+              <label for="set-seed">Simulation Seed (Deterministic RNG)</label>
+              <input type="number" id="set-seed" class="form-input" min="0" max="999999" value="42">
+              <small>Same seed produces exact same baseline & coordinated conditions.</small>
+            </div>
+
+            <div class="form-group">
+              <label for="set-base-speed">Base Ambulance Speed (km/h)</label>
+              <input type="number" id="set-base-speed" class="form-input" min="10" max="120" value="50">
+              <small>Speed under zero congestion (default 50 km/h).</small>
+            </div>
+
+            <div class="form-group">
+              <label for="set-signal-delay">Signal Delay per Junction (seconds)</label>
+              <input type="number" id="set-signal-delay" class="form-input" min="0" max="120" value="20">
+              <small>Expected wait time at red signals (default 20 s).</small>
+            </div>
+
+            <div class="form-group">
+              <label for="set-alert-start">Alert Trigger Start (ETA seconds)</label>
+              <input type="number" id="set-alert-start" class="form-input" min="10" max="300" value="90">
+              <small>Alert triggers when ETA ≤ this value (default 90 s).</small>
+            </div>
+
+            <div class="form-group">
+              <label for="set-alert-min">Alert Trigger Minimum (ETA seconds)</label>
+              <input type="number" id="set-alert-min" class="form-input" min="5" max="200" value="60">
+              <small>Alert does not trigger if ETA < this value (default 60 s).</small>
+            </div>
+
+            <div class="form-group">
+              <label for="set-escalation-timeout">Escalation Timeout (simulated seconds)</label>
+              <input type="number" id="set-escalation-timeout" class="form-input" min="5" max="120" value="20">
+              <small>Simulated seconds before unacknowledged alert escalates (default 20 s).</small>
+            </div>
+
+            <div class="form-group">
+              <label for="set-roadblock-penalty">Roadblock Fallback Penalty (seconds)</label>
+              <input type="number" id="set-roadblock-penalty" class="form-input" min="0" max="600" value="120">
+              <small>Penalty delay applied if rerouting is unavailable (default 120 s).</small>
+            </div>
+
+            <div class="form-group">
+              <label for="set-clearance-factor">Clearance Factor (Acked Alert)</label>
+              <input type="number" id="set-clearance-factor" class="form-input" min="0.0" max="1.0" step="0.05" value="0.70">
+              <small>Fractional signal delay reduction if acknowledged (default 0.70 = 70%).</small>
+            </div>
+
+            <div class="form-group">
+              <label for="set-esc-clearance-factor">Clearance Factor (Escalated Alert)</label>
+              <input type="number" id="set-esc-clearance-factor" class="form-input" min="0.0" max="1.0" step="0.05" value="0.30">
+              <small>Fractional delay reduction if escalated (default 0.30 = 30%).</small>
+            </div>
+          </form>
+          <div id="settings-feedback" class="feedback-msg hidden"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Acknowledge Modal -->
+  <div id="ack-modal" class="modal-backdrop hidden">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>Acknowledge Police Alert</h3>
+        <button id="modal-close" class="btn-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="modal-alert-details">Dispatching corridor clearance request...</p>
+        <div class="form-group">
+          <label for="officer-name-input">Officer Name / ID (Required):</label>
+          <input type="text" id="officer-name-input" class="form-input" placeholder="e.g. Officer R. Sharma - Traffic Unit 4">
+          <small id="officer-name-error" class="error-text hidden">Please enter a valid officer name.</small>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cancel-ack" class="btn btn-secondary">Cancel</button>
+        <button id="btn-confirm-ack" class="btn btn-primary">Confirm Clearance</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Leaflet JS (CDN with fallback detection) -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+          crossorigin=""></script>
+  
+  <!-- App JS -->
+  <script src="/static/app.js"></script>
+</body>
+</html>
